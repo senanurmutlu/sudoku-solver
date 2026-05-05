@@ -6,88 +6,81 @@ import google.generativeai as genai
 import json
 import re
 from PIL import Image
-import os 
+import os
 
+# -------------------------
+# API SETUP
+# -------------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-#kullanılacak model  
+
 model = genai.GenerativeModel("gemini-2.5-flash")
 
+
+# -------------------------
+# OCR: IMAGE -> GRID
+# -------------------------
 def image_to_grid(image_path):
-    """
-    Verilen Sudoku görselini Gemini kullanarak 9x9 grid'e çevirir.
-    Boş hücreler 0 olarak döner.
-    """
     image = Image.open(image_path)
 
-    # Gemini'ye verilecek prompt
     prompt = (
         "Extract the Sudoku grid.\n"
-        "Return a 9x9 matrix using numbers 0-9.\n"
-        "0 means empty cell."
+        "Return ONLY a valid 9x9 JSON array.\n"
+        "Use numbers 0-9, where 0 = empty cell."
     )
 
-    # Görsel + prompt gönder
     response = model.generate_content([prompt, image])
     raw = response.text
 
-    # JSON formatını regex ile yakala
     match = re.search(r"\[\s*\[.*?\]\s*\]", raw, re.DOTALL)
 
     if not match:
-        raise ValueError(
-            "OCR JSON üretmedi.\n\nGemini çıktısı:\n" + raw
-        )
+        raise ValueError("OCR JSON üretmedi:\n" + raw)
 
     json_text = match.group(0)
 
-    # JSON parse et
-    try:
-        grid = json.loads(json_text)
-    except json.JSONDecodeError:
-        raise ValueError("JSON parse edilemedi:\n" + json_text)
+    grid = json.loads(json_text)
 
-    # 9x9 kontrolü
     if len(grid) != 9 or any(len(row) != 9 for row in grid):
-        raise ValueError("OCR sonucu 9x9 değil.")
+        raise ValueError("Grid 9x9 değil.")
 
     return grid
 
+
+# -------------------------
+# SAT VARIABLE MAPPING
+# -------------------------
 def var(i, j, n):
-    """
-    (i, j) hücresinde n sayısının olması durumunu
-    tek bir değişken numarasına map eder (SAT encoding için).
-    """
     return 81 * i + 9 * j + n
 
 
+# -------------------------
+# CNF ENCODING
+# -------------------------
 def encode_sudoku(grid):
-    """
-    Sudoku grid'ini CNF formatına çevirir.
-    (SAT solver için gerekli)
-    """
     cnf = []
 
-    # Her hücrede en az bir sayı olmalı
+    # Her hücre en az 1 sayı
     for i in range(9):
         for j in range(9):
             cnf.append([var(i, j, n) for n in range(1, 10)])
 
-            # Aynı hücrede iki sayı olamaz
+            # En fazla 1 sayı
             for n1 in range(1, 10):
                 for n2 in range(n1 + 1, 10):
                     cnf.append([-var(i, j, n1), -var(i, j, n2)])
 
-    # Her satırda her sayı bir kez bulunmalı
+    # Satırlar
     for i in range(9):
         for n in range(1, 10):
             cnf.append([var(i, j, n) for j in range(9)])
 
-    # Her sütunda her sayı bir kez bulunmalı
+    # Sütunlar
     for j in range(9):
         for n in range(1, 10):
             cnf.append([var(i, j, n) for i in range(9)])
 
-    # Her 3x3 blokta her sayı bir kez bulunmalı
+    # 3x3 bloklar
     for bi in range(3):
         for bj in range(3):
             for n in range(1, 10):
@@ -97,7 +90,7 @@ def encode_sudoku(grid):
                         block.append(var(i, j, n))
                 cnf.append(block)
 
-    # Başlangıç gridindeki verilen sayılar
+    # Başlangıç değerleri
     for i in range(9):
         for j in range(9):
             if grid[i][j] != 0:
@@ -106,25 +99,21 @@ def encode_sudoku(grid):
     return cnf
 
 
+# -------------------------
+# SOLVER
+# -------------------------
 def solve_all_solutions(cnf):
-    """
-    Verilen CNF için tüm çözümleri bulur.
-    SAT solver kullanır (Glucose3).
-    """
     solver = Glucose3()
 
-    # CNF clause'larını solver'a ekle
     for clause in cnf:
         solver.add_clause(clause)
 
     solutions = []
 
-    # Tüm çözümleri bul
     while solver.solve():
         model = solver.get_model()
         solution = [[0] * 9 for _ in range(9)]
 
-        # Modeli Sudoku gridine çevir
         for v in model:
             if v > 0:
                 v -= 1
@@ -135,16 +124,15 @@ def solve_all_solutions(cnf):
 
         solutions.append(solution)
 
-        # Aynı çözümü tekrar bulmamak için engelle
         solver.add_clause([-v for v in model if v > 0])
 
     return solutions
 
 
+# -------------------------
+# DRAW SUDOKU
+# -------------------------
 def draw_sudoku(grid, title):
-    """
-    Sudoku çözümünü matplotlib ile görselleştirir.
-    """
     fig, ax = plt.subplots(figsize=(4, 4))
     ax.set_title(title)
 
@@ -152,7 +140,6 @@ def draw_sudoku(grid, title):
     ax.set_yticks(range(10))
     ax.grid(True)
 
-    # Sayıları hücrelere yaz
     for i in range(9):
         for j in range(9):
             ax.text(j + 0.5, 8.5 - i, str(grid[i][j]),
@@ -164,56 +151,64 @@ def draw_sudoku(grid, title):
     plt.show()
 
 
+# -------------------------
+# GUI FUNCTION
+# -------------------------
 def open_image():
-    """
-    Kullanıcıdan Sudoku görseli alır,
-    çözer ve sonuçları gösterir.
-    """
     try:
         path = filedialog.askopenfilename(
             title="Sudoku Görseli Seç",
             filetypes=[("Image Files", "*.png *.jpg *.jpeg")]
         )
 
-      if not path:
-          return
-
-      grid = image_to_grid(path)
-       cnf = encode_sudoku(grid)
-      solutions = solve_all_solutions(cnf)
-
-       if not solutions:
-            messagebox.showinfo("Sonuç", "Sudoku çözülemez.")
+        if not path:
             return
 
-      messagebox.showinfo("Sonuç", f"{len(solutions)} çözüm bulundu.")
+        grid = image_to_grid(path)
+        cnf = encode_sudoku(grid)
+        solutions = solve_all_solutions(cnf)
 
-      for i, sol in enumerate(solutions):
+        if not solutions:
+            messagebox.showinfo("Sonuç", "Çözüm bulunamadı.")
+            return
+
+        messagebox.showinfo("Sonuç", f"{len(solutions)} çözüm bulundu.")
+
+        for i, sol in enumerate(solutions):
             draw_sudoku(sol, f"Çözüm {i + 1}")
 
-   except Exception as e:
+    except Exception as e:
         messagebox.showerror("Hata", str(e))
 
+
+# -------------------------
+# MAIN GUI
+# -------------------------
 def main():
     root = tk.Tk()
-    root.title("Sudoku SAT Solver (Gemini API)")
+    root.title("Sudoku SAT Solver (Gemini AI)")
 
-  tk.Label(
+    tk.Label(
         root,
         text="SUDOKU SAT SOLVER",
         font=("Arial", 16),
-        fg='purple'
+        fg="purple"
     ).pack(pady=10)
 
-   tk.Button(
+    tk.Button(
         root,
         text="Sudoku Görseli Yükle",
         command=open_image,
         width=30,
         height=2,
-        fg='purple'
-   ).pack(pady=20)
+        fg="purple"
+    ).pack(pady=20)
 
-   root.mainloop()  
-    if __name__ == "__main__":
+    root.mainloop()
+
+
+# -------------------------
+# START PROGRAM
+# -------------------------
+if __name__ == "__main__":
     main()
