@@ -12,14 +12,16 @@ import os
 # API SETUP
 # -------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY bulunamadı!")
+
 genai.configure(api_key=GEMINI_API_KEY)
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 
-# -------------------------
 # OCR: IMAGE -> GRID
-# -------------------------
 def image_to_grid(image_path):
     image = Image.open(image_path)
 
@@ -205,6 +207,8 @@ def main():
     ).pack(pady=20)
 
     root.mainloop()
+    if __name__ == "__main__":
+    main()
 
 
 # -------------------------
