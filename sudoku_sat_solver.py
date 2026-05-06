@@ -7,7 +7,8 @@ import json
 import re
 from PIL import Image
 
-GEMINI_API_KEY = "AIzaSyAf-HpDHThffX9Po1QGWQaNDb13ld_iOvk"
+## write your own API key 
+GEMINI_API_KEY = "" API key "
 genai.configure(api_key=GEMINI_API_KEY)
 
 model = genai.GenerativeModel("gemini-2.5-flash")
